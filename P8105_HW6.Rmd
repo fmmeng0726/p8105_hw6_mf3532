@@ -1,0 +1,108 @@
+---
+title: "P8105_HW6"
+author: "Meng Fang"
+date: '2022-11-29'
+output: github_document
+---
+
+### Load Package
+
+```{r, include = FALSE}
+library(tidyverse)
+library(stringr)
+```
+
+### Problem 2
+
+```{r}
+homicide <- read_csv("./data/homicide-data.csv")
+```
+
+#### Clean Data: Create `city_state` variable and a binary variable indicating whether the homicide is solved. Omit cities Dallas, TX; Phoenix, AZ; and Kansas City, MO. Also omit Tulsa, AL.
+
+```{r}
+homicide <- homicide %>%
+  mutate(city_state = str_c(city,",",state),
+         status = case_when(
+           disposition == "Closed without arrest" ~ 0,
+           disposition == "Open/No arrest" ~ 0,
+           disposition == "Closed by arrest" ~ 1
+         ),
+         victim_age = as.numeric(victim_age)
+         )%>%
+  filter(city_state != "Dallas,TX",
+         city_state != "Phoenix,AZ",
+         city_state != "Kansas City,MO",
+         city_state != "Tulsa,AL",
+         victim_race %in% c("White","Black")) %>% drop_na()
+  
+```
+
+
+#### For the city of Baltimore, MD, use the glm function to fit a logistic regression with resolved vs unresolved as the outcome and victim age, sex and race as predictors. Save the output of glm as an R object; apply the broom::tidy to this object; and obtain the estimate and confidence interval of the adjusted odds ratio for solving homicides comparing male victims to female victims keeping all other variables fixed.
+
+```{r}
+Baltimore_df <- homicide %>% filter(city_state == "Baltimore,MD")
+status_glm <- glm(status ~ victim_age + victim_race + victim_sex, data = Baltimore_df, family = "binomial")
+status_glm %>%
+  broom::tidy() %>%
+  mutate(
+    OR = exp(estimate),
+    conf.low = exp(estimate - 1.96 * std.error),
+    conf.high = exp(estimate + 1.96 * std.error)
+  ) %>%
+  filter(term == "victim_sexMale") %>%
+  select(term, OR, conf.low, conf.high) %>%
+  knitr::kable(digit = 3)
+```
+
+#### Run glm for each city.
+
+Write a function to get everything we need
+
+```{r}
+glm_fun <- function(x){
+  
+  city_glm <- glm(status ~ victim_age + victim_race + victim_sex, data = x, family = "binomial")
+  
+  result <- city_glm %>%
+    broom::tidy() %>%
+    mutate(
+    OR = exp(estimate),
+    conf.low = exp(estimate - 1.96 * std.error),
+    conf.high = exp(estimate + 1.96 * std.error)
+  ) %>%
+    filter(term == "victim_sexMale") %>%
+    select(OR, conf.low, conf.high) %>% mutate(across(is.numeric, round, digit = 3))
+  
+  result 
+}
+```
+
+Run through each city
+
+```{r}
+result_df <- homicide %>%
+  select(city_state, status, victim_age, victim_race, victim_sex) %>%
+  nest(status:victim_sex) %>%
+  mutate(result = map(data, glm_fun)) %>%
+  select(-data) %>%
+  unnest(result)
+
+result_df
+```
+
+#### Draw a plot of the CIs and ORs for each city
+
+```{r}
+result_df %>%
+  ggplot(aes(x = reorder(city_state, OR), y = OR)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high)) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  xlab("City and State") +
+  ylab("Adjusted Odds Ratio") +
+  ggtitle("Estimated Odds Ratio and CIs")
+  
+```
+
