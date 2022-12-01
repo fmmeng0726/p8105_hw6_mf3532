@@ -5,11 +5,10 @@ date: '2022-11-29'
 output: github_document
 ---
 
-### Load Package
-
 ```{r, include = FALSE}
 library(tidyverse)
 library(stringr)
+library(modelr)
 ```
 
 ### Problem 2
@@ -18,7 +17,7 @@ library(stringr)
 homicide <- read_csv("./data/homicide-data.csv")
 ```
 
-#### Clean Data: Create `city_state` variable and a binary variable indicating whether the homicide is solved. Omit cities Dallas, TX; Phoenix, AZ; and Kansas City, MO. Also omit Tulsa, AL.
+Clean Data: Create `city_state` variable and a binary variable indicating whether the homicide is solved. Omit cities Dallas, TX; Phoenix, AZ; and Kansas City, MO. Also omit Tulsa, AL.
 
 ```{r}
 homicide <- homicide %>%
@@ -39,7 +38,7 @@ homicide <- homicide %>%
 ```
 
 
-#### For the city of Baltimore, MD, use the glm function to fit a logistic regression with resolved vs unresolved as the outcome and victim age, sex and race as predictors. Save the output of glm as an R object; apply the broom::tidy to this object; and obtain the estimate and confidence interval of the adjusted odds ratio for solving homicides comparing male victims to female victims keeping all other variables fixed.
+For the city of Baltimore, MD, use the glm function to fit a logistic regression with resolved vs unresolved as the outcome and victim age, sex and race as predictors. Save the output of glm as an R object; apply the broom::tidy to this object; and obtain the estimate and confidence interval of the adjusted odds ratio for solving homicides comparing male victims to female victims keeping all other variables fixed.
 
 ```{r}
 Baltimore_df <- homicide %>% filter(city_state == "Baltimore,MD")
@@ -56,9 +55,7 @@ status_glm %>%
   knitr::kable(digit = 3)
 ```
 
-#### Run glm for each city.
-
-Write a function to get everything we need
+Now we Run glm for each city. First we write a function to get everything we need (OR, confidence interval bounds)
 
 ```{r}
 glm_fun <- function(x){
@@ -79,7 +76,7 @@ glm_fun <- function(x){
 }
 ```
 
-Run through each city
+Them we run `glm` through each city using the function we created
 
 ```{r}
 result_df <- homicide %>%
@@ -92,7 +89,7 @@ result_df <- homicide %>%
 result_df
 ```
 
-#### Draw a plot of the CIs and ORs for each city
+Finally, draw a plot of the CIs and ORs for each city
 
 ```{r}
 result_df %>%
@@ -106,3 +103,82 @@ result_df %>%
   
 ```
 
+In this case a high OR indicates that homicide cases of male are more likely to be solved than those cases of female, and vice versa. On this case Albuquerque,NM has the highest OR meaning the that homicide cases of male are more likely to be solved than those cases of female. On the other hand, New York NY has the lowest OR, which means that that homicide cases of female are more likely to be solved than those cases of male.
+
+### Problem 3
+
+Load Data and Package
+
+```{r}
+birthwt <- read_csv("./data/birthweight.csv")
+```
+
+Clean Dataset
+
+```{r}
+birthwt <- birthwt %>%
+  mutate(
+    babysex = factor(babysex, levels = c(1,2), labels = c("male","female")),
+    frace = factor(frace, levels = c(1,2,3,4,8,9), labels = c("white","black","asian","puerto rican","other","unknown")),
+    malform = factor(malform, levels = c(0,1), labels = c("absent","present")),
+    mrace = factor(mrace, levels = c(1,2,3,4,8), labels = c("white","black","asian","puerto rican","other"))
+  ) %>%
+  drop_na()
+```
+
+Propose a model: I think that potential useful variables that can predict the child birth weight are: baby’s head circumference at birth, baby’s length at birth, mother’s weight at delivery, gestational age in weeks, mother’s weight gain during pregnancy (pounds), these are biological factors of the mom and the baby that might influence the birthweight.
+
+```{r}
+model_1 <- lm(bwt ~ bhead + blength + delwt + gaweeks + wtgain, data = birthwt)
+summary(model_1)
+```
+
+We see that all the predictors are significant in this proposed model, so the model is statistically valid. Now we show a residuals against fitted value plot of `model_1`
+
+```{r}
+birthwt %>%
+  add_residuals(model_1) %>%
+  add_predictions(model_1) %>%
+  ggplot(aes(x = pred, y = resid)) +
+  geom_point() +
+  labs(
+    x = "Fitted Value",
+    y = "Residuals"
+  )
+```
+
+The fitted value vs residual plot has most of the points scattered evenly around 0 in this case, which looks good to us. Then we Compare the proposed model with other two model
+
+```{r}
+cv_df <- crossv_mc(birthwt, 100) %>%
+  mutate(train = map(train, as_tibble),
+         test = map(test, as_tibble))
+
+cv_df <- cv_df %>% mutate(
+  model_1 = map(train, ~lm(bwt ~ bhead + blength + delwt + gaweeks + wtgain, data = .x)),
+  model_2 = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+  model_3 = map(train, ~lm(bwt ~ bhead + blength + babysex + bhead * blength + bhead * babysex + blength * babysex + bhead * blength * babysex, data = .x))
+) %>%
+  mutate(
+    rmse_1 = map2_dbl(model_1, test, ~rmse(model = .x, data = .y)),
+    rmse_2 = map2_dbl(model_2, test, ~rmse(model = .x, data = .y)),
+    rmse_3 = map2_dbl(model_3, test, ~rmse(model = .x, data = .y))
+  )
+```
+
+Finally, we plot the rmse for each model and compare the prediction error.
+
+```{r}
+cv_df %>%
+  select(starts_with("rmse")) %>%
+  pivot_longer(
+    everything(),
+    names_to = "model",
+    values_to = "rmse",
+    names_prefix = "rmse_"
+  ) %>%
+  mutate(model = fct_inorder(model)) %>%
+  ggplot(aes(x = model, y = rmse)) + geom_violin()
+```
+
+Base on these results, we can see that model 1 has the lowest prediction error (rmse), model 3 has the second lowest prediction error, and model 2 has the highest prediction error. As a result, we conclude that our proposed model is better than the other two model in predicting child birthweight.
